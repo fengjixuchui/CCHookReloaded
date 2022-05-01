@@ -492,10 +492,14 @@ intptr_t hooked_CL_CgameSystemCalls(intptr_t *args)
 	{
 		int entityNum = args[1];
 		float *origin = (float*)args[2];
+
+		if (entityNum < 0 || entityNum >= MAX_ENTITIES)
+			break;
 		
-		if (entityNum >= 0 && entityNum < MAX_CLIENTS)
+		if (entityNum < MAX_CLIENTS)
 			VectorCopy(origin, cgs_clientinfo[entityNum].interOrigin);
 
+		cg_entities[entityNum].reType = RT_MODEL;
 		VectorCopy(origin, cg_entities[entityNum].origin);
 		break;
 	}
@@ -504,6 +508,9 @@ intptr_t hooked_CL_CgameSystemCalls(intptr_t *args)
 		// We copy the entity to make sure we do not change the data of the real entity.
 		// Mainly detected by nxAC (nitmod)
 		refEntity_t ent = *(refEntity_t*)args[1];
+		if (ent.entityNum < 0 || ent.entityNum >= MAX_ENTITIES)
+			break;
+
 		cg_entities[ent.entityNum] = ent;
 
 		if (disableRendering)
@@ -513,6 +520,8 @@ intptr_t hooked_CL_CgameSystemCalls(intptr_t *args)
 
 		if (cfg.pickupChams)
 		{
+			// For pickup items, entityNum is always the playerID. Check hModel instead.
+
 			for (size_t i = 0; i < std::size(media.pickupModels); i++)
 			{
 				if (ent.hModel != media.pickupModels[i])
@@ -538,12 +547,12 @@ intptr_t hooked_CL_CgameSystemCalls(intptr_t *args)
 			{
 				const bool isVisible = eng::IsPointVisible(cg_refdef.vieworg, ent.origin);
 
-				ent.renderfx |=  isVisible ? RF_DEPTHHACK : 0;
+				ent.renderfx |= isVisible ? RF_DEPTHHACK : 0;
 				DoSyscall(CG_R_ADDREFENTITYTOSCENE, &ent);
 
 				ent.customShader = media.coverShader;
 				Vector4Copy(isVisible ? cfg.missileVisRGBA : cfg.missileInvRGBA, ent.shaderRGBA);
-				ent.renderfx |=  RF_DEPTHHACK | RF_NOSHADOW;
+				ent.renderfx |= RF_DEPTHHACK | RF_NOSHADOW;
 				if (isVisible) ent.renderfx &= ~RF_DEPTHHACK;
 
 				return DoSyscall(CG_R_ADDREFENTITYTOSCENE, &ent);
@@ -1049,7 +1058,7 @@ intptr_t __cdecl hooked_vmMain(intptr_t id, intptr_t a1, intptr_t a2, intptr_t a
 #endif
 
 		PatchLoadedImages(!disableRendering);
-		
+
 
 		// If limbo menu is open or screenshot is in progress do not draw ESP
 		if (cg_showGameView || disableRendering)
@@ -1247,16 +1256,17 @@ intptr_t __cdecl hooked_vmMain(intptr_t id, intptr_t a1, intptr_t a2, intptr_t a
 			auto& ent = cg_snapshot.entities[i];
 			if (ent.number < 0 || ent.number >= MAX_ENTITIES)
 				continue;
-			if (cg_entities[ent.number].reType == RT_MAX_REF_ENTITY_TYPE)
-				continue;
 
-			if (VectorDistance(cg_refdef.vieworg, cg_entities[ent.number].origin) > cfg.maxEspDistance)
+			const auto& cgEnt = cg_entities[ent.number];
+			if (cgEnt.reType == RT_MAX_REF_ENTITY_TYPE)
+				continue;
+			if (VectorDistance(cg_refdef.vieworg, cgEnt.origin) > cfg.maxEspDistance)
 				continue;
 
 			if (cfg.missileEsp && ent.eType == ET_MISSILE)
 			{
 				float x, y;
-				if (!ui::WorldToScreen(cg_entities[ent.number].origin, &x, &y))
+				if (!ui::WorldToScreen(cgEnt.origin, &x, &y))
 					continue;
 
 				if (ent.weapon == WP_LANDMINE && eng::IsEntityArmed(&ent))
@@ -1280,15 +1290,27 @@ intptr_t __cdecl hooked_vmMain(intptr_t id, intptr_t a1, intptr_t a2, intptr_t a
 					char timeString[64];
 					sprintf_s(timeString, XorString("%i"), time);
 					ui::DrawText(x, y + 10.0f, 0.12f, 0.12f, colorRed, timeString, 0.0f, 0, ITEM_TEXTSTYLE_SHADOWED, ITEM_ALIGN_CENTER, &media.limboFont1);
+
+					if (cfg.missileRadius && time <= 5)
+					{
+						const vec3_t dir = { 0, 0, -1 };
+						draw3dCommands.emplace_back(cgEnt.origin, dir, colorRed, media.circleShader, 420.0f);
+					}
+				}
+				else if(cfg.missileRadius && (ent.weapon == WP_GRENADE_LAUNCHER || ent.weapon == WP_GRENADE_PINEAPPLE) && ent.time)
+				{
+					const vec3_t dir = { 0, 0, -1 };
+					draw3dCommands.emplace_back(cgEnt.origin, dir, colorRed, media.circleShader, 260.0f);
 				}
 			}
 			else if(cfg.pickupEsp && ent.eType == ET_ITEM)
 			{
 				float x, y;
-				if (!ui::WorldToScreen(cg_entities[ent.number].origin, &x, &y))
+				if (!ui::WorldToScreen(cgEnt.origin, &x, &y))
 					continue;
 
-				// TODO: Do not hardcode model indices
+				// TODO: Do not hardcode model indices.
+				// Pickup items use the playerID for entityNum in ADDREFENTITYTOSCENE instead.
 				if (ent.modelindex == 3)
 					ui::DrawIcon(x, y, 15.0f, 15.0f, colorGreen, media.medkitIcon);
 				else if (ent.modelindex == 33)
@@ -1669,7 +1691,8 @@ intptr_t __cdecl hooked_vmMain(intptr_t id, intptr_t a1, intptr_t a2, intptr_t a
 			}
 		}
 
-		memset(cg_entities, RT_MAX_REF_ENTITY_TYPE, sizeof(cg_entities));
+		for (size_t i = 0; i < std::size(cg_entities); i++)
+			cg_entities[i].reType = RT_MAX_REF_ENTITY_TYPE;
 	}
 
 	return result;
@@ -1796,12 +1819,12 @@ void hooked_EndFrame(int *frontEndMsec, int *backEndMsec)
 	if (cfg.quickUnbanReconnect && GetAsyncKeyState(VK_F10)&1)
 	{
 		// Set new spoof seed to change etpro guid and mac address on reconnect
-		spoofSeed = GetTickCount() * rand();
+		spoofSeed = GetTickCount() * tools::Rand();
 
 		char newEtKey[32];
 		strcpy_s(newEtKey, XorString("0000001002"));
 		for (size_t i = 0; i < 18; i++)
-			newEtKey[i + 10] = '0' + (rand() % 10);
+			newEtKey[i + 10] = '0' + (tools::Rand() % 10);
 
 		char etDir[MAX_PATH + 1], backupPath[MAX_PATH + 1];
 		uint32_t len = GetModuleFileNameA(GetModuleHandleA(nullptr), etDir, sizeof(etDir));
@@ -1831,7 +1854,7 @@ void hooked_EndFrame(int *frontEndMsec, int *backEndMsec)
 		char reconnectCommand[64];
 		strcpy_s(reconnectCommand, XorString("net_port 27???; net_restart; vid_restart; reconnect"));
 		for (size_t i = 0; i < 3; i++)
-			reconnectCommand[i + 11] = '0' + (rand() % 10);
+			reconnectCommand[i + 11] = '0' + (tools::Rand() % 10);
 
 		HWND consoleTextbox = FindWindowExA(FindWindowA(nullptr, 
 			off::cur.IsEtLegacy() ? XorString("ET: Legacy Console") : XorString("ET Console")), nullptr, XorString("Edit"), 0);
@@ -1913,17 +1936,26 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserv
 		AllocConsole();
 		freopen(XorString("CONOUT$"), XorString("w"), stdout);
 		printf(XorString("Loaded CCHook:Reloaded! Make sure to undefine `USE_DEBUG` for release builds.\n"));
-		printf(XorString("Waiting for game...\n"));
 #endif
 
-		srand(GetTickCount());
+		tools::Srand(GetTickCount() * GetCurrentProcessId());
 
 		spoofSeed = cfg.spoofSeed;
 		if (!spoofSeed)
-			spoofSeed = GetTickCount() * rand();
+			spoofSeed = GetTickCount() * tools::Rand();
 
 		if (!off::Init())
-			printf(XorString("[WARNING] Failed to recognize 'et.exe' version. Defaulting to 2.60b\n"));
+		{
+			printf(XorString("[WARNING] Failed to recognize 'et.exe' version. Defaulting to dynamic offsets.\n"));
+
+			if (!off::RetrieveDynamic())
+			{
+				printf(XorString("[ ERROR ] Failed to retrieve dynamic offsets!\n"));
+				return FALSE;
+			}
+		}
+
+		printf(XorString("Waiting for game...\n"));
 
 		// Make sure to hook even if we inject late and no DLL is loaded after us
 		LdrDllNotification(0, nullptr, nullptr);
