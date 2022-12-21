@@ -3,7 +3,6 @@
 struct SConfig
 {
 	// General
-	bool spoofVmMainRetAddress = true; // Doesn't work for ET:Legacy yet
 	bool cleanScreenshots = true;
 	const char *pakName = "cch";
 
@@ -51,6 +50,8 @@ struct SConfig
 	float aimbotHumanFovMaxX = 5.0f;
 	float aimbotHumanFovMaxY = 10.0f;
 	float aimbotHumanSpeed = 0.0666f;
+	float aimbotHeadBoxTraceStep = 0.5f;
+	float aimbotBodyBoxTraceStep = 0.3f;
 
 
 	// Spoofer
@@ -80,4 +81,4 @@ struct SConfig
 	float maxEspDistance = FLT_MAX;
 };
 
-inline const SConfig cfg;
+inline SConfig cfg;

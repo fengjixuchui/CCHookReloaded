@@ -203,6 +203,9 @@ EMod InitializeMod()
 	media.thompsonIcon = DoSyscall(CG_R_REGISTERSHADER, XorString("icons/iconw_thompson_1_select.tga"));
 	media.stenIcon = DoSyscall(CG_R_REGISTERSHADER, XorString("icons/iconw_sten_1_select.tga"));
 	media.fg42Icon = DoSyscall(CG_R_REGISTERSHADER, XorString("icons/iconw_fg42_1_select.tga"));
+	media.cursorIcon = DoSyscall(CG_R_REGISTERSHADER, XorString("ui/assets/3_cursor3.tga"));
+	media.checkboxChecked = DoSyscall(CG_R_REGISTERSHADER, XorString("ui/assets/check.tga"));
+	media.checkboxUnchecked = DoSyscall(CG_R_REGISTERSHADER, XorString("ui/assets/check_not.tga"));
 
 
 	// Ensure "pak->referenced" is set back to 0 again after PAK was used
@@ -969,11 +972,11 @@ void __fastcall hooked_glReadPixels(void *_this, void *edx, int x, int y, int wi
 
 	disableRendering = true;
 
-	off::cur.SCR_UpdateScreen();
-	off::cur.SCR_UpdateScreen();
-	off::cur.SCR_UpdateScreen();
-	off::cur.SCR_UpdateScreen();
-	off::cur.SCR_UpdateScreen();
+	off::cur.SCR_UpdateScreen()();
+	off::cur.SCR_UpdateScreen()();
+	off::cur.SCR_UpdateScreen()();
+	off::cur.SCR_UpdateScreen()();
+	off::cur.SCR_UpdateScreen()();
 
 	orig_glReadPixels(_this, x, y, width, height, format, type, pixels);
 
@@ -1008,16 +1011,20 @@ intptr_t __cdecl hooked_vmMain(intptr_t id, intptr_t a1, intptr_t a2, intptr_t a
 		vm_t *_cgvm = off::cur.cgvm();
 		_cgvm->entryPoint = orig_vmMain;
 
+		// Spoof the return address when calling "orig_vmMain" to make sure ACs don't easily detect our hook (e.g. as ETPro does).
+		// NOTE: This is not supported for ET:Legacy but support can be added if required.
 		intptr_t result;
-		if (cfg.spoofVmMainRetAddress && !off::cur.IsEtLegacy())
+		switch (off::cur.VmSpoofType())
 		{
-			// Spoof the return address when calling "orig_vmMain" to make sure ACs don't easily detect our hook (e.g. as ETPro does).
-			// NOTE: This is not supported for ET:Legacy but support can be added if required.
+		case off::COffsets::EVmSpoofType::Call12:
 			result = SpoofCall12(off::cur.VM_Call_vmMain(), (uintptr_t)orig_vmMain, _id, _a1, _a2, _a3, _a4, _a5, _a6, _a7, _a8, _a9, _a10, _a11, _a12, 0, 0, 0);
-		}
-		else
-		{
+			break;
+		case off::COffsets::EVmSpoofType::Call12_Steam:
+			result = SpoofCall12_Steam(off::cur.VM_Call_vmMain(), (uintptr_t)orig_vmMain, _id, _a1, _a2, _a3, _a4, _a5, _a6, _a7, _a8, _a9, _a10, _a11, _a12, 0, 0, 0, 0);
+			break;
+		default:
 			result = orig_vmMain(_id, _a1, _a2, _a3, _a4, _a5, _a6, _a7, _a8, _a9, _a10, _a11, _a12, _a13, _a14, _a15, _a16);
+			break;
 		}
 
 		// Rehook vmMain
@@ -1031,12 +1038,24 @@ intptr_t __cdecl hooked_vmMain(intptr_t id, intptr_t a1, intptr_t a2, intptr_t a
 	};
 	
 	intptr_t result = VmMainCall(id, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16);
-	
-	if (cfg.etproGuid && cfg.etproGuid[0]) etpro_SpoofGUID(cfg.etproGuid);
-	if (cfg.nitmodMac && cfg.nitmodMac[0]) nitmod_SpoofMAC(cfg.nitmodMac);
 
+	if (id == CG_MOUSE_EVENT)
+	{
+		const int dx = a1;
+		const int dy = a2;
 
-	if (id == CG_DRAW_ACTIVE_FRAME)
+		if (showMenu)
+		{
+			cgDC_cursorx += dx;
+			if (cgDC_cursorx < 0) cgDC_cursorx = 0;
+			if (cgDC_cursorx > 640) cgDC_cursorx = 640;
+
+			cgDC_cursory += dy;
+			if (cgDC_cursory < 0) cgDC_cursory = 0;
+			if (cgDC_cursory > 480) cgDC_cursory = 480;
+		}
+	}
+	else if (id == CG_DRAW_ACTIVE_FRAME)
 	{
 		const int serverTime = a1;
 
@@ -1050,7 +1069,12 @@ intptr_t __cdecl hooked_vmMain(intptr_t id, intptr_t a1, intptr_t a2, intptr_t a
 
 			// Reset patched images back to original
 			PatchLoadedImages(false);
+
+			old_reliableSequence = off::cur.clc_reliableSequence();
 		}
+
+		if (currentMod == EMod::EtPro &&  cfg.etproGuid && cfg.etproGuid[0]) etpro_SpoofGUID(cfg.etproGuid);
+		if (currentMod == EMod::Nitmod && cfg.nitmodMac && cfg.nitmodMac[0]) nitmod_SpoofMAC(cfg.nitmodMac);
 
 #ifdef USE_DEBUG
 		if (GetAsyncKeyState(VK_F9)&1)
@@ -1065,9 +1089,6 @@ intptr_t __cdecl hooked_vmMain(intptr_t id, intptr_t a1, intptr_t a2, intptr_t a
 			return result;
 
 		auto &localClient = cgs_clientinfo[cg_snapshot.ps.clientNum];
-
-		ui::DrawBoxedText(10.0f, 10.0f, 0.16f, 0.16f, colorWhite, XorString("^1CC^7Hook^1:^9Reloaded"), 
-			0.0f, 0, ITEM_TEXTSTYLE_NORMAL, ITEM_ALIGN_LEFT, &media.limboFont1, colorMenuBg, colorMenuBo);
 
 		// Spectator Warning
 		if (cfg.spectatorWarning)
@@ -1390,7 +1411,7 @@ intptr_t __cdecl hooked_vmMain(intptr_t id, intptr_t a1, intptr_t a2, intptr_t a
 							VectorAdd(maxs, offset, maxs);
 
 							// SnapVector(ent->s.pos.trBase + ent->client->ps.viewheight)
-							if (eng::IsBoxVisible(cg_refdef.vieworg, mins, maxs, 0.1f, aimPos))
+							if (eng::IsBoxVisible(cg_refdef.vieworg, mins, maxs, cfg.aimbotHeadBoxTraceStep, aimPos))
 								return true;
 						}
 						else
@@ -1405,7 +1426,7 @@ intptr_t __cdecl hooked_vmMain(intptr_t id, intptr_t a1, intptr_t a2, intptr_t a
 							VectorAdd(mins, origin, mins);
 							VectorAdd(maxs, origin, maxs);
 
-							if (eng::IsBoxVisible(cg_refdef.vieworg, mins, maxs, 0.1f, aimPos))
+							if (eng::IsBoxVisible(cg_refdef.vieworg, mins, maxs, cfg.aimbotBodyBoxTraceStep, aimPos))
 								return true;
 						}
 					}
@@ -1693,6 +1714,8 @@ intptr_t __cdecl hooked_vmMain(intptr_t id, intptr_t a1, intptr_t a2, intptr_t a
 
 		for (size_t i = 0; i < std::size(cg_entities); i++)
 			cg_entities[i].reType = RT_MAX_REF_ENTITY_TYPE;
+
+		ui::DrawMenu();
 	}
 
 	return result;
@@ -1851,8 +1874,8 @@ void hooked_EndFrame(int *frontEndMsec, int *backEndMsec)
 			fclose(etkey);
 		}
 
-		char reconnectCommand[64];
-		strcpy_s(reconnectCommand, XorString("net_port 27???; net_restart; vid_restart; reconnect"));
+		char reconnectCommand[96];
+		strcpy_s(reconnectCommand, XorString("pb_myguid; net_port 27???; net_restart; vid_restart; pb_myguid; reconnect"));
 		for (size_t i = 0; i < 3; i++)
 			reconnectCommand[i + 11] = '0' + (tools::Rand() % 10);
 

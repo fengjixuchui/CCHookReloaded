@@ -10,12 +10,14 @@
 // System includes
 #include <WinSock2.h>
 #include <windows.h>
+#include <winternl.h>
 #include <intrin.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <array>
 #include <vector>
 #include <unordered_map>
+#include <functional>
 #include <string>
 #include <iostream>
 #include <sstream>
@@ -38,19 +40,14 @@
 // Extern functions
 extern "C" intptr_t __fastcall SpoofCall12(uintptr_t spoofed_retaddr, uintptr_t target, intptr_t id, intptr_t a1, intptr_t a2, intptr_t a3, intptr_t a4, 
 	intptr_t a5, intptr_t a6, intptr_t a7, intptr_t a8, intptr_t a9, intptr_t a10, intptr_t a11, intptr_t a12, uintptr_t edi, uintptr_t esi, uintptr_t real_retaddr);
+extern "C" intptr_t __fastcall SpoofCall12_Steam(uintptr_t spoofed_retaddr, uintptr_t target, intptr_t id, intptr_t a1, intptr_t a2, intptr_t a3, intptr_t a4, intptr_t a5,
+	intptr_t a6, intptr_t a7, intptr_t a8, intptr_t a9, intptr_t a10, intptr_t a11, intptr_t a12, uintptr_t edi, uintptr_t esi, uintptr_t ebp, uintptr_t real_retaddr);
 extern "C" intptr_t __fastcall SpoofCall16(uintptr_t spoofed_retaddr, uintptr_t target, intptr_t id, intptr_t a1, intptr_t a2, intptr_t a3, intptr_t a4, 
 	intptr_t a5, intptr_t a6, intptr_t a7, intptr_t a8, intptr_t a9, intptr_t a10, intptr_t a11, intptr_t a12, intptr_t a13, intptr_t a14, intptr_t a15, 
 	intptr_t a16, uintptr_t edi, uintptr_t esi, uintptr_t real_retaddr);
 
 
 // Missing Windows structs
-typedef struct _LSA_UNICODE_STRING
-{
-	USHORT Length;
-	USHORT MaximumLength;
-	PWSTR  Buffer;
-} LSA_UNICODE_STRING, *PLSA_UNICODE_STRING, UNICODE_STRING, *PUNICODE_STRING;
-
 typedef union _LDR_DLL_NOTIFICATION_DATA
 {
 	ULONG Flags;					//Reserved.
@@ -586,8 +583,14 @@ struct etpro_payload_E_t
 
 
 // Static media and data
-static const vec4_t colorMenuBg = { 0.16f, 0.2f, 0.17f, 0.8f };
-static const vec4_t colorMenuBo = { 0.50f, 0.5f, 0.50f, 0.5f };
+static const vec4_t colorMenuBg     = { 0.16f, 0.20f, 0.17f, 0.80f };
+static const vec4_t colorMenuBgHl   = { 0.36f, 0.40f, 0.37f, 0.80f };
+static const vec4_t colorMenuBgPr   = { 0.06f, 0.10f, 0.07f, 0.90f };
+static const vec4_t colorMenuBo     = { 0.50f, 0.50f, 0.50f, 0.50f };
+static const vec4_t colorMenuBoHl   = { 0.60f, 0.60f, 0.60f, 0.50f };
+static const vec4_t colorMenuBoPr   = { 0.40f, 0.40f, 0.40f, 0.60f };
+static const vec4_t colorCheckbox   = { 0.90f, 0.90f, 0.90f, 0.90f };
+static const vec4_t colorCheckboxHl = { 1.00f, 1.00f, 1.00f, 1.00f };
 
 struct hitbox_def_t
 {
